@@ -91,6 +91,23 @@ class KuwoMusicClient(BaseMusicClient):
             if song_info.with_valid_download_url and song_info.ext in AudioLinkTester.VALID_AUDIO_EXTS: break
         # return
         return song_info
+    '''_parsewithguyueiapi'''
+    def _parsewithguyueiapi(self, search_result: dict, request_overrides: dict = None):
+        # init
+        request_overrides, song_id = request_overrides or {}, str(search_result.get('MUSICRID') or search_result.get('musicrid')).removeprefix('MUSIC_')
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'}
+        decrypt_final_url_func = lambda encrypted_str, key=b"nsh": (lambda dec_bytes: "http" + "".join(chr(dec_bytes[i] ^ key[(i - 1) % len(key)]) for i in range(1, len(dec_bytes))).rstrip("\x00"))(base64.b64decode((lambda s: s + "=" * ((4 - len(s) % 4) % 4))("A" + encrypted_str[9:])))
+        # parse
+        (resp := self.get(f'https://www.guyuei.com/music/kw.php?', params={'url': f'https://www.kuwo.cn/play_detail/{song_id}', 'yinzhi': 'hns'}, headers=headers, **request_overrides)).raise_for_status()
+        if not (download_url := (download_result := resp2json(resp=resp))['url']) or not str(download_url := decrypt_final_url_func(download_url)).startswith('http'): return SongInfo(source=self.source)
+        duration_in_secs = float(int(search_result.get('DURATION') or search_result.get('duration') or 0))
+        download_url_status: dict = self.audio_link_tester.test(url=download_url, request_overrides=request_overrides, renew_session=True)
+        song_info = SongInfo(
+            raw_data={'search': search_result, 'download': download_result, 'lyric': {}}, source=self.source, song_name=legalizestring(search_result.get('SONGNAME') or search_result.get('name')), singers=legalizestring(search_result.get('ARTIST') or search_result.get('artist')), album=legalizestring(search_result.get('ALBUM') or search_result.get('album')), ext=download_url_status['ext'], 
+            file_size_bytes=download_url_status['file_size_bytes'], file_size=download_url_status['file_size'], identifier=song_id, duration_s=duration_in_secs, duration=SongInfoUtils.seconds2hms(duration_in_secs), lyric=None, cover_url=search_result.get('hts_MVPIC') or search_result.get('albumpic'), download_url=download_url_status['download_url'], download_url_status=download_url_status, 
+        )
+        # return
+        return song_info
     '''_parsewithnxinxzapi'''
     def _parsewithnxinxzapi(self, search_result: dict, request_overrides: dict = None):
         # init
@@ -128,7 +145,7 @@ class KuwoMusicClient(BaseMusicClient):
     '''_parsewiththirdpartapis'''
     def _parsewiththirdpartapis(self, search_result: dict, request_overrides: dict = None):
         if self.default_cookies or request_overrides.get('cookies'): return SongInfo(source=self.source)
-        for parser_func in [self._parsewithcggapi, self._parsewithnxinxzapi, self._parsewithhaitangwapi, self._parsewithyyy001api]:
+        for parser_func in [self._parsewithcggapi, self._parsewithnxinxzapi, self._parsewithhaitangwapi, self._parsewithyyy001api, self._parsewithguyueiapi]:
             song_info_flac = SongInfo(source=self.source, raw_data={'search': search_result, 'download': {}, 'lyric': {}})
             with suppress(Exception): song_info_flac = parser_func(search_result, request_overrides)
             if song_info_flac.with_valid_download_url and song_info_flac.ext in AudioLinkTester.VALID_AUDIO_EXTS: break
