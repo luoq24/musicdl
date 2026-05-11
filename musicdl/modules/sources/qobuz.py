@@ -114,6 +114,26 @@ class QobuzMusicClient(BaseMusicClient):
             if song_info.with_valid_download_url and song_info.ext in AudioLinkTester.VALID_AUDIO_EXTS: break
         # return
         return song_info
+    '''_parsewithsquidapi'''
+    def _parsewithsquidapi(self, search_result: dict, request_overrides: dict = None):
+        # init
+        request_overrides, song_id, headers = request_overrides or {}, str(search_result['id']), {
+            "accept": "application/json, text/plain, */*", "accept-language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7", "cookie": f"captcha_verified_at={int(time.time() * 1000) - 60000}", "referer": "https://qobuz.squid.wtf/", "sec-ch-ua": '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"', 
+            "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"', "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin", "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+        }
+        # parse
+        for music_quality in QobuzMusicClientUtils.MUSIC_QUALITIES:
+            (resp := requests.get(f"https://qobuz.squid.wtf/api/download-music?track_id={song_id}&quality={music_quality}", headers=headers, timeout=10, **request_overrides)).raise_for_status()
+            if not (download_url := safeextractfromdict((download_result := resp2json(resp=resp)), ['data', 'url'], '')) or not str(download_url).startswith('http'): continue
+            real_music_quality = real_music_quality[0] if isinstance((real_music_quality := parse_qs(urlparse(str(download_url)).query, keep_blank_values=True).get('fmt') or music_quality), list) else real_music_quality
+            download_url_status: dict = self.audio_link_tester.test(url=download_url, request_overrides=request_overrides, renew_session=True)
+            song_info = SongInfo(
+                raw_data={'search': search_result, 'download': download_result, 'lyric': {}, 'quality': real_music_quality}, source=self.source, song_name=legalizestring(search_result.get('title')), singers=legalizestring(safeextractfromdict(search_result, ['performer', 'name'], None)), album=legalizestring(safeextractfromdict(search_result, ['album', 'title'], None)), ext=download_url_status['ext'], file_size_bytes=download_url_status['file_size_bytes'], 
+                file_size=download_url_status['file_size'], identifier=song_id, duration_s=int(float(search_result.get('duration') or 0)), duration=SongInfoUtils.seconds2hms(int(float(search_result.get('duration') or 0))), lyric=None, cover_url=safeextractfromdict(search_result, ['album', 'image', 'large'], None), download_url=download_url_status['download_url'], download_url_status=download_url_status, 
+            )
+            if song_info.with_valid_download_url and song_info.ext in AudioLinkTester.VALID_AUDIO_EXTS: break
+        # return
+        return song_info
     '''_parsewithwjheapi'''
     def _parsewithwjheapi(self, search_result: dict, request_overrides: dict = None):
         # init
@@ -160,7 +180,7 @@ class QobuzMusicClient(BaseMusicClient):
     '''_parsewiththirdpartapis'''
     def _parsewiththirdpartapis(self, search_result: dict, request_overrides: dict = None):
         if QobuzMusicClientUtils.get_token_func(self.default_headers, "X-User-Auth-Token", "x-user-auth-token"): return SongInfo(source=self.source, raw_data={'quality': QobuzMusicClientUtils.MUSIC_QUALITIES[-1]})
-        for parser_func in [self._parsewithmusicdlapi, self._parsewithwjheapi, self._parsewithdabmusicapi, self._parsewithdabyeetsuapi]:
+        for parser_func in [self._parsewithsquidapi, self._parsewithmusicdlapi, self._parsewithwjheapi, self._parsewithdabmusicapi, self._parsewithdabyeetsuapi]:
             song_info_flac = SongInfo(source=self.source, raw_data={'search': search_result, 'download': {}, 'lyric': {}, 'quality': QobuzMusicClientUtils.MUSIC_QUALITIES[-1]})
             with suppress(Exception): song_info_flac = parser_func(search_result, request_overrides)
             if song_info_flac.with_valid_download_url and song_info_flac.ext in AudioLinkTester.VALID_AUDIO_EXTS: break
