@@ -16,7 +16,7 @@ from contextlib import suppress
 from rich.progress import Progress
 from ..sources import BaseMusicClient
 from urllib.parse import quote, urljoin
-from ..utils import legalizestring, resp2json, usesearchheaderscookies, cleanlrc, SongInfo, AudioLinkTester, SongInfoUtils, LyricSearchClient
+from ..utils import resp2json, legalizestring, usesearchheaderscookies, extractdurationsecondsfromlrc, cleanlrc, SongInfo, AudioLinkTester, SongInfoUtils, LyricSearchClient
 
 
 '''GDStudioMusicClient'''
@@ -81,23 +81,24 @@ class GDStudioMusicClient(BaseMusicClient):
             for search_result in json_repair.loads(resp.text[resp.text.index('(')+1: resp.text.rindex(')')]):
                 # --download results
                 if (not isinstance(search_result, dict)) or ('id' not in search_result) or ('url_id' not in search_result) or ('source' not in search_result): continue
-                song_info, song_id = SongInfo(source=self.source, root_source=search_result['source']), search_result['id']
-                for br in GDStudioMusicClient.MUSIC_QUALITIES:
-                    data_json = {'types': 'url', 'id': song_id, 'source': search_result['source'], 'br': br, 's': self._yieldcrc32(song_id)}; params = {'callback': self._yieldcallback()}
-                    with suppress(Exception): (resp := self.post(GDStudioMusicClient.SITE_TO_API_MAPPER[search_result['source']], params=params, data=data_json, **request_overrides)).raise_for_status() if method == 'post' else (resp := self.get(GDStudioMusicClient.SITE_TO_API_MAPPER[search_result['source']], params={**params, **data_json, '_': str(int(time.time() * 1000))}, **request_overrides)).raise_for_status()
-                    if not locals().get('resp') or not hasattr(locals().get('resp'), 'text'): continue
-                    if not (download_url := (download_result := json_repair.loads(resp.text[resp.text.index('(')+1: resp.text.rindex(')')])).get('url')): continue
-                    download_url = urljoin(f'https://music.gdstudio.xyz/', download_url) if not str(download_url).startswith('http') else download_url
-                    download_url = f'https://music-proxy.gdstudio.org/{download_url}' if search_result['source'] in {'bilibili'} else download_url
-                    download_url_status: dict = self.audio_link_tester.test(url=download_url, request_overrides=request_overrides, renew_session=True)
-                    duration_in_secs = SongInfoUtils.estimatedurationwithfilesizebr(float(download_result.get('size', 0)), float(download_result.get('br', br)), return_seconds=True)
-                    song_info = SongInfo(
-                        raw_data={'search': search_result, 'download': download_result, 'lyric': {}}, source=self.source, song_name=legalizestring(search_result.get('name')), singers=legalizestring(', '.join(search_result.get('artist') or [])), album=legalizestring(search_result.get('album')), ext=download_url_status['ext'], file_size_bytes=download_url_status['file_size_bytes'], 
-                        file_size=download_url_status['file_size'], identifier=song_id, duration_s=duration_in_secs, duration=SongInfoUtils.seconds2hms(duration_in_secs), lyric=None, cover_url=None, download_url=download_url_status['download_url'], download_url_status=download_url_status, root_source=search_result['source'],
-                    )
-                    if search_result['source'] in {'bilibili'}: song_info.download_url_status['ok'] = True if song_info.download_url_status['file_size_bytes'] > 0 else False # use proxy url, general test method will fail
-                    del resp; song_info.ext = 'm4a' if song_info.ext in {'m4s', 'mp4'} else song_info.ext
-                    if song_info.with_valid_download_url and song_info.ext in AudioLinkTester.VALID_AUDIO_EXTS: break
+                song_info, song_id, params = SongInfo(source=self.source, root_source=search_result['source']), search_result['id'], {'callback': self._yieldcallback()}
+                data_json = {'types': 'url', 'id': song_id, 'source': search_result['source'], 'br': (br := GDStudioMusicClient.MUSIC_QUALITIES[0]), 's': self._yieldcrc32(song_id)}
+                with suppress(Exception): (resp := self.post(GDStudioMusicClient.SITE_TO_API_MAPPER[search_result['source']], params=params, data=data_json, **request_overrides)).raise_for_status() if method == 'post' else (resp := self.get(GDStudioMusicClient.SITE_TO_API_MAPPER[search_result['source']], params={**params, **data_json, '_': str(int(time.time() * 1000))}, **request_overrides)).raise_for_status()
+                if not locals().get('resp') or not hasattr(locals().get('resp'), 'text'): continue
+                (download_url := (download_result := json_repair.loads(resp.text[resp.text.index('(')+1: resp.text.rindex(')')])).get('url'))
+                download_url = urljoin(f'https://music.gdstudio.xyz/', download_url) if not str(download_url).startswith('http') else download_url
+                download_url = f'https://music-proxy.gdstudio.org/{download_url}' if search_result['source'] in {'bilibili'} else download_url
+                download_url_status: dict = self.audio_link_tester.test(url=download_url, request_overrides=request_overrides, renew_session=True)
+                if not download_url_status['ok'] and search_result['source'] in {'kuwo'}: 
+                    with suppress(Exception): (resp := self.get(f"https://music-api.gdstudio.xyz/api.php?types=url&source={search_result['source']}&id={song_id}&br={br}", **request_overrides)).raise_for_status()
+                    download_url_status: dict = self.audio_link_tester.test(url=(download_url := (download_result := resp2json(resp=resp)).get('url', download_url)), request_overrides=request_overrides, renew_session=True)
+                duration_in_secs = SongInfoUtils.estimatedurationwithfilesizebr(float(download_result.get('size', 0) or download_url_status['file_size_bytes']), float(download_result.get('br', br)), return_seconds=True)
+                song_info = SongInfo(
+                    raw_data={'search': search_result, 'download': download_result, 'lyric': {}}, source=self.source, song_name=legalizestring(search_result.get('name')), singers=legalizestring(', '.join(search_result.get('artist') or [])), album=legalizestring(search_result.get('album')), ext=download_url_status['ext'], file_size_bytes=download_url_status['file_size_bytes'], 
+                    file_size=download_url_status['file_size'], identifier=song_id, duration_s=duration_in_secs, duration=SongInfoUtils.seconds2hms(duration_in_secs), lyric=None, cover_url=None, download_url=download_url_status['download_url'], download_url_status=download_url_status, root_source=search_result['source'],
+                )
+                if search_result['source'] in {'bilibili'}: song_info.download_url_status['ok'] = True if song_info.download_url_status['file_size_bytes'] > 0 else False # use proxy url, general test method will fail
+                del resp; song_info.ext = 'm4a' if song_info.ext in {'m4s', 'mp4'} else song_info.ext
                 if not song_info.with_valid_download_url or song_info.ext not in AudioLinkTester.VALID_AUDIO_EXTS: continue
                 # --lyric results
                 data_json = {'types': 'lyric', 'id': search_result.get('lyric_id'), 'source': search_result['source'], 's': self._yieldcrc32(str(search_result.get('lyric_id')))}
@@ -105,11 +106,12 @@ class GDStudioMusicClient(BaseMusicClient):
                     (resp := self.post(GDStudioMusicClient.SITE_TO_API_MAPPER[search_result['source']], data=data_json, params={'callback': self._yieldcallback()}, timeout=10, **request_overrides)).raise_for_status() if method == 'post' else (resp := self.get(GDStudioMusicClient.SITE_TO_API_MAPPER[search_result['source']], params={**{'callback': self._yieldcallback()}, **data_json, '_': str(int(time.time() * 1000))}, timeout=10, **request_overrides)).raise_for_status()
                     lyric_result = json_repair.loads(resp.text[resp.text.index('(')+1: resp.text.rindex(')')])
                     lyric = cleanlrc(lyric_result.get('lyric') or "") or cleanlrc(lyric_result.get('tlyric') or "") or 'NULL'
-                except:
+                except Exception:
                     lyric_result, lyric = dict(), 'NULL'
                 if not lyric or lyric in {'NULL', 'null', 'None', 'none'} or '歌词获取失败' in lyric: lyric_result, lyric = LyricSearchClient().search(artist_name=song_info.singers, track_name=song_info.song_name, request_overrides=request_overrides)
                 song_info.raw_data['lyric'] = lyric_result if lyric_result else song_info.raw_data['lyric']
                 song_info.lyric = lyric if (lyric and (lyric not in {'NULL'})) else song_info.lyric
+                if (duration_in_secs := extractdurationsecondsfromlrc(song_info.lyric or '')) and duration_in_secs > 0: song_info.duration_s, song_info.duration = duration_in_secs, SongInfoUtils.seconds2hms(duration_in_secs)
                 # --cover results
                 if search_result['source'] in {'kuwo'}:
                     kuwo_cover_cdn_hosts = ["http://img1.kwcdn.kuwo.cn/star/albumcover/", "http://img2.kwcdn.kuwo.cn/star/albumcover/", "http://img3.kwcdn.kuwo.cn/star/albumcover/"]
