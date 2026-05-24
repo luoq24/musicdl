@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 from contextlib import suppress
 from rich.progress import Progress
 from ..sources import BaseMusicClient
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, parse_qs
 from ..utils import legalizestring, usesearchheaderscookies, searchdictbykey, extractdurationsecondsfromlrc, cleanlrc, SongInfo, QuarkParser, AudioLinkTester, SongInfoUtils
 
 
@@ -60,11 +60,15 @@ class FiveSongMusicClient(BaseMusicClient):
         request_overrides, base_url = request_overrides or {}, "https://www.5song.xyz"
         guess_format_func = lambda label: (m.group(1) if (m := re.search(r"(DSD|WAV|FLAC|APE|ALAC|AAC|MP3|OGG|M4A)", str(label).upper())) else None)
         sort_by_audio_quality_func = lambda link_list: sorted(link_list, key=lambda x: (FiveSongMusicClient.MUSIC_QUALITY_RANK.get((fmt := guess_format_func(x.get("label", ""))), 999), fmt or ""))
+        with suppress(Exception): page_no = 1; page_no = int(float(parse_qs(urlparse(url=search_url).query, keep_blank_values=True).get('page')[0]))
         # successful
         try:
             # --search results
             (resp := self.get(search_url, **request_overrides)).raise_for_status()
-            for search_result in self._parsesearchresultsfromhtml(resp.text):
+            task_id = progress.add_task(f"{self.source}._search >>> Start to process the 0th search result on page {page_no}", total=None, completed=0)
+            for search_result_idx, search_result in enumerate(self._parsesearchresultsfromhtml(resp.text)):
+                # --update progress
+                progress.update(task_id, description=f'{self.source}._search >>> Start to process the {search_result_idx+1}th search result on page {page_no}', completed=search_result_idx+1, total=search_result_idx+1)
                 # --download results
                 if not isinstance(search_result, dict) or ('detail_url' not in search_result): continue
                 song_info, song_id, quark_links = SongInfo(source=self.source), urlparse(str(search_result['detail_url'])).path.strip('/').split('/')[-1].split('.')[0], []
