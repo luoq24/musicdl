@@ -141,51 +141,6 @@ class QQMusicClient(BaseMusicClient):
         if not song_info.with_valid_download_url or song_info.ext not in AudioLinkTester.VALID_AUDIO_EXTS: return song_info
         # return
         return song_info
-    '''_parsewithygkingapi'''
-    def _parsewithygkingapi(self, search_result: dict, request_overrides: dict = None):
-        # init
-        request_overrides, song_id, MUSIC_QUALITIES = request_overrides or {}, search_result.get('mid') or search_result.get('songmid'), ["master", "atmos", "atmos_51", "flac", "320"]
-        if not safeextractfromdict(search_result, ['album', 'title'], None) or search_result.get('albumname'): search_result.update(self._getsongmetainfo(song_id=song_id, request_overrides=request_overrides))
-        headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",}
-        # parse
-        for music_quality in MUSIC_QUALITIES:
-            (resp := requests.get(f"https://api.ygking.top/api/song/url?mid={song_id}&quality={music_quality}", verify=False, timeout=10, headers=headers, **request_overrides)).raise_for_status()
-            if not (download_url := safeextractfromdict((download_result := resp2json(resp=resp)), ['data', song_id], None)) or not str(download_url).startswith('http'): break
-            with suppress(Exception): download_result['detail'] = resp2json(requests.get(f"https://api.ygking.top/api/song/detail?mid={song_id}", verify=False, timeout=10, headers=headers, **request_overrides))
-            download_url_status: dict = self.audio_link_tester.test(url=download_url, request_overrides=request_overrides, renew_session=True)
-            song_info = SongInfo(
-                raw_data={'search': search_result, 'download': download_result, 'lyric': {}}, source=self.source, song_name=legalizestring(safeextractfromdict(download_result, ['detail', 'data', 'track_info', 'title'], None)), singers=legalizestring(', '.join(singer.get('name') for singer in (safeextractfromdict(download_result, ['detail', 'data', 'track_info', 'singer'], []) or []) if isinstance(singer, dict) and singer.get('name'))), album=legalizestring(safeextractfromdict(download_result, ['detail', 'data', 'track_info', 'album', 'name'], None)), ext=download_url_status['ext'], file_size_bytes=download_url_status['file_size_bytes'], 
-                file_size=download_url_status['file_size'], identifier=song_id, duration_s=safeextractfromdict(download_result, ['detail', 'data', 'track_info', 'interval'], None), duration=SongInfoUtils.seconds2hms(safeextractfromdict(download_result, ['detail', 'data', 'track_info', 'interval'], None)), lyric=None, cover_url=f"https://y.gtimg.cn/music/photo_new/T002R800x800M000{safeextractfromdict(download_result, ['detail', 'data', 'track_info', 'album', 'mid'], '')}.jpg", download_url=download_url_status['download_url'], download_url_status=download_url_status, 
-            )
-            if song_info.with_valid_download_url and song_info.ext in AudioLinkTester.VALID_AUDIO_EXTS: break
-        if not song_info.with_valid_download_url or song_info.ext not in AudioLinkTester.VALID_AUDIO_EXTS: return song_info
-        # parse lyric result
-        with suppress(Exception): resp = None; (resp := requests.get(f"https://api.ygking.top/api/lyric?mid={song_id}", timeout=10, headers=headers, **request_overrides)).raise_for_status()
-        lyric_result, lyric = ({}, 'NULL') if (not locals().get('resp') or not hasattr(locals().get('resp'), 'text')) else ((lyric_result := resp2json(resp=resp)), cleanlrc(safeextractfromdict(lyric_result, ['data', 'lyric'], '')))
-        song_info.raw_data['lyric'] = lyric_result if lyric_result else song_info.raw_data['lyric']
-        song_info.lyric = lyric if (lyric and (lyric not in {'NULL'})) else song_info.lyric
-        # return
-        return song_info
-    '''_parsewithluoyueapi'''
-    def _parsewithluoyueapi(self, search_result: dict, request_overrides: dict = None):
-        # init
-        MUSIC_QUALITIES, request_overrides, song_id = ["flac24bit", "hires", "flac", "320k"], request_overrides or {}, search_result.get('mid') or search_result.get('songmid')
-        headers = {"Content-Type": "application/json", "User-Agent": "lx-music-request/2.6.0", "X-Request-Key": "lxmusic"}
-        if not safeextractfromdict(search_result, ['album', 'title'], None) or search_result.get('albumname'): search_result.update(self._getsongmetainfo(song_id=song_id, request_overrides=request_overrides))
-        # parse
-        for music_quality in MUSIC_QUALITIES:
-            with suppress(Exception): resp = None; (resp := requests.get(f"http://220.167.101.253:6001/api/musics/url/tx/{song_id}/{music_quality}", headers=headers, timeout=10, **request_overrides)).raise_for_status()
-            if not locals().get('resp') or not hasattr(locals().get('resp'), 'text'): break
-            if not (download_url := safeextractfromdict((download_result := resp2json(resp=resp)), ['data'], None)) or not str(download_url).startswith('http'): break
-            download_url_status: dict = self.audio_link_tester.test(url=download_url, request_overrides=request_overrides, renew_session=True)
-            song_info = SongInfo(
-                raw_data={'search': search_result, 'download': download_result, 'lyric': {}}, source=self.source, song_name=legalizestring(search_result.get('title') or search_result.get('songname')), singers=legalizestring(', '.join([singer.get('name') for singer in (search_result.get('singer', []) or []) if isinstance(singer, dict) and singer.get('name')])), album=legalizestring(safeextractfromdict(search_result, ['album', 'title'], None) or search_result.get('albumname')), ext=download_url_status['ext'], file_size_bytes=download_url_status['file_size_bytes'], 
-                file_size=download_url_status['file_size'], identifier=str(song_id), duration_s=int(float(search_result.get('interval', 0) or 0)), duration=SongInfoUtils.seconds2hms(int(float(search_result.get('interval', 0) or 0))), lyric=None, cover_url=f"https://y.gtimg.cn/music/photo_new/T002R800x800M000{safeextractfromdict(search_result, ['album', 'mid'], '') or search_result.get('albummid')}.jpg", download_url=download_url_status['download_url'], download_url_status=download_url_status, 
-            )
-            if song_info.with_valid_download_url and song_info.ext in AudioLinkTester.VALID_AUDIO_EXTS: break
-        if not song_info.with_valid_download_url or song_info.ext not in AudioLinkTester.VALID_AUDIO_EXTS: return song_info
-        # return
-        return song_info
     '''_parsewithlxmusicapi'''
     def _parsewithlxmusicapi(self, search_result: dict, request_overrides: dict = None):
         # init
@@ -323,10 +278,10 @@ class QQMusicClient(BaseMusicClient):
     '''_parsewiththirdpartapis'''
     def _parsewiththirdpartapis(self, search_result: dict, request_overrides: dict = None):
         if self.default_cookies or (request_overrides := request_overrides or {}).get('cookies'): return SongInfo(source=self.source)
-        l1_parser_funcs = [self._parsewithxcvtsapi, self._parsewithvkeysapi, self._parsewithliuyunidcapi, ] # svip
-        l2_parser_funcs = [self._parsewithnkiapi, self._parsewithxianyuwapi, self._parsewithtangapi, self._parsewith317akapi, ] # vip
-        l3_parser_funcs = [self._parsewithcyapi, self._parsewithxunhuisiapi, self._parsewithlxmusicapi, ] # vip account but only mp3 or m4a files can be requested
-        l4_parser_funcs = [self._parsewithlpzapi, self._parsewithygkingapi, self._parsewithluoyueapi, ] # invalid or unstable accounts
+        l1_parser_funcs = [self._parsewithxcvtsapi, self._parsewithvkeysapi, ] # svip
+        l2_parser_funcs = [self._parsewithnkiapi, self._parsewithtangapi, self._parsewith317akapi, ] # vip
+        l3_parser_funcs = [self._parsewithcyapi, self._parsewithxunhuisiapi, ] # vip account but only mp3 or m4a files can be requested
+        l4_parser_funcs = [self._parsewithliuyunidcapi, self._parsewithxianyuwapi, self._parsewithlpzapi, self._parsewithlxmusicapi, ] # invalid or unstable accounts
         for parser_func in (l1_parser_funcs + l2_parser_funcs + l3_parser_funcs + l4_parser_funcs):
             song_info_flac = SongInfo(source=self.source, raw_data={'search': search_result, 'download': {}, 'lyric': {}})
             with suppress(Exception): song_info_flac = parser_func(search_result, request_overrides)
