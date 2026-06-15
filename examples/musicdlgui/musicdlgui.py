@@ -15,7 +15,7 @@ from PyQt5.QtGui import *
 from PyQt5.QtCore import *
 from musicdl import musicdl
 from PyQt5.QtWidgets import *
-from musicdl.modules.utils.misc import touchdir, sanitize_filepath
+from musicdl.modules.utils.misc import sanitize_filepath
 
 
 '''MusicdlGUI'''
@@ -86,7 +86,7 @@ class MusicdlGUI(QWidget):
         with requests.get(song_info['download_url'], headers=self.music_client.music_clients[song_info['source']].default_download_headers, stream=True, verify=False) as resp:
             if resp.status_code == 200:
                 total_size, chunk_size, download_size = int(resp.headers['content-length']), 1024, 0
-                touchdir(song_info['work_dir'])
+                os.makedirs(song_info['work_dir'], exist_ok=True)
                 download_music_file_path = sanitize_filepath(os.path.join(song_info['work_dir'], song_info['song_name']+'.'+song_info['ext']))
                 with open(download_music_file_path, 'wb') as fp:
                     for chunk in resp.iter_content(chunk_size=chunk_size):
