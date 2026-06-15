@@ -25,7 +25,7 @@ class MusicdlGUI(QWidget):
         # initialize
         self.setWindowTitle('MusicdlGUI —— Charles的皮卡丘')
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), 'icon.ico')))
-        self.setFixedSize(900, 480)
+        self.resize(900, 480)
         self.initialize()
         # search sources
         self.src_names = ['QQMusicClient', 'KuwoMusicClient', 'MiguMusicClient', 'QianqianMusicClient', 'KugouMusicClient', 'NeteaseMusicClient']
@@ -33,17 +33,21 @@ class MusicdlGUI(QWidget):
         self.check_boxes = []
         for src in self.src_names:
             cb = QCheckBox(src, self)
-            cb.setCheckState(QtCore.Qt.Checked)
+            cb.setCheckState(QtCore.Qt.Checked if src == 'NeteaseMusicClient' else QtCore.Qt.Unchecked)
             self.check_boxes.append(cb)
         # input boxes
         self.label_keyword = QLabel('Keywords:')
         self.lineedit_keyword = QLineEdit('尾戒')
+        self.label_quality = QLabel('Quality:')
+        self.combo_quality = QComboBox()
+        self.combo_quality.addItems(['All', 'Standard (<5MB)', 'High (5-20MB)', 'Lossless (>20MB/FLAC)'])
         self.button_keyword = QPushButton('Search')
         # search results table
         self.results_table = QTableWidget()
         self.results_table.setColumnCount(7)
         self.results_table.setHorizontalHeaderLabels(['ID', 'Singers', 'Songname', 'Filesize', 'Duration', 'Album', 'Source'])
         self.results_table.horizontalHeader().setStyleSheet("QHeaderView::section{background:skyblue;color:black;}")
+        self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         # mouse click menu
@@ -57,11 +61,15 @@ class MusicdlGUI(QWidget):
         grid.addWidget(self.label_src, 0, 0, 1, 1)
         for idx, cb in enumerate(self.check_boxes): grid.addWidget(cb, 0, idx+1, 1, 1)
         grid.addWidget(self.label_keyword, 1, 0, 1, 1)
-        grid.addWidget(self.lineedit_keyword, 1, 1, 1, len(self.src_names)-1)
+        grid.addWidget(self.lineedit_keyword, 1, 1, 1, len(self.src_names)-3)
+        grid.addWidget(self.label_quality, 1, len(self.src_names)-2, 1, 1)
+        grid.addWidget(self.combo_quality, 1, len(self.src_names)-1, 1, 1)
         grid.addWidget(self.button_keyword, 1, len(self.src_names), 1, 1)
         grid.addWidget(self.label_download, 2, 0, 1, 1)
         grid.addWidget(self.bar_download, 2, 1, 1, len(self.src_names))
         grid.addWidget(self.results_table, 3, 0, len(self.src_names), len(self.src_names)+1)
+        grid.setColumnStretch(1, 1)
+        grid.setRowStretch(3, 1)
         self.grid = grid
         self.setLayout(grid)
         # connect
@@ -106,9 +114,39 @@ class MusicdlGUI(QWidget):
                 music_sources.append(cb.text())
         # keyword
         keyword = self.lineedit_keyword.text()
+        # quality filter
+        quality_filter = self.combo_quality.currentText()
         # search
         self.music_client = musicdl.MusicClient(music_sources=music_sources)
         self.search_results = self.music_client.search(keyword=keyword)
+        # filter by quality
+        def matches_quality(song_info):
+            if quality_filter.startswith('All'):
+                return True
+            fsb = song_info.get('file_size_bytes')
+            ext = (song_info.get('ext') or '').lower()
+            lossless_exts = {'flac', 'wav', 'ape', 'aiff'}
+            if fsb is None:
+                if quality_filter.startswith('Standard'):
+                    return ext not in lossless_exts
+                if quality_filter.startswith('High'):
+                    return False
+                if quality_filter.startswith('Lossless'):
+                    return ext in lossless_exts
+                return True
+            if quality_filter.startswith('Standard'):
+                return fsb < 5 * 1024 * 1024
+            elif quality_filter.startswith('High'):
+                return 5 * 1024 * 1024 <= fsb < 20 * 1024 * 1024
+            elif quality_filter.startswith('Lossless'):
+                return fsb >= 20 * 1024 * 1024 or ext in lossless_exts
+            return True
+        filtered_results = {}
+        for source, results in self.search_results.items():
+            filtered = [r for r in results if matches_quality(r)]
+            if filtered:
+                filtered_results[source] = filtered
+        self.search_results = filtered_results
         # showing
         count, row = 0, 0
         for per_source_search_results in self.search_results.values():
