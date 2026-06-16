@@ -101,11 +101,11 @@ class KugouMusicClient(BaseMusicClient):
         # init
         request_overrides, file_hash, MUSIC_QUALITIES = request_overrides or {}, search_result.get('hash') or search_result.get('FileHash'), ['clear', 'atmos', 'flac24bit', 'flac', '320k', '128k']
         if not (search_result.get('duration') or search_result.get('Duration') or search_result.get('timelen')): search_result.update(self._getsongmetainfo(song_id=file_hash, request_overrides=request_overrides))
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36", "Accept": "application/json", "Referer": "http://api.liuyunidc.cn/baimusic/", "Host": "api.liuyunidc.cn"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36", "Accept": "application/json", "Referer": "http://yibaizhongzhuanapi.liuyunidc.cn/baimusic/", "Host": "yibaizhongzhuanapi.liuyunidc.cn"}
         key = requests.get('https://github.com/CharlesPikachu/musicdl/releases/download/keys/baimusic.txt', **request_overrides).text.strip()
         # parse
         for music_quality in MUSIC_QUALITIES:
-            (resp := requests.get("https://api.liuyunidc.cn/baimusic/musicurl.php", params={"source": "kg", "musicId": file_hash, "quality": music_quality, "card": key}, headers=headers, timeout=10, **request_overrides)).raise_for_status()
+            (resp := requests.get("http://yibaizhongzhuanapi.liuyunidc.cn/baimusic/musicurl.php", params={"source": "kg", "musicId": file_hash, "quality": music_quality, "card": key}, headers=headers, timeout=10, **request_overrides)).raise_for_status()
             if not (download_url := safeextractfromdict((download_result := resp2json(resp=resp)), ['url'], None)) or not str(download_url).startswith('http'): continue
             with suppress(Exception): duration_in_secs = 0; duration_in_secs = float(search_result.get('duration', 0) or search_result.get('Duration', 0) or 0) or (float(search_result.get('timelen', 0) or 0) / 1000)
             download_url_status: dict = self.audio_link_tester.test(url=download_url, request_overrides=request_overrides, renew_session=True)
