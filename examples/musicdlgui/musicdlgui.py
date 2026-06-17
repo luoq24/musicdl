@@ -9,12 +9,10 @@ WeChat Official Account (微信公众号):
 import os
 import sys
 import requests
-from PyQt5 import *
-from PyQt5 import QtCore
-from PyQt5.QtGui import *
-from PyQt5.QtCore import *
+from PyQt6.QtGui import *
+from PyQt6.QtCore import *
 from musicdl import musicdl
-from PyQt5.QtWidgets import *
+from PyQt6.QtWidgets import *
 from musicdl.modules.utils.misc import sanitize_filepath
 
 
@@ -33,7 +31,7 @@ class MusicdlGUI(QWidget):
         self.check_boxes = []
         for src in self.src_names:
             cb = QCheckBox(src, self)
-            cb.setCheckState(QtCore.Qt.Checked if src == 'NeteaseMusicClient' else QtCore.Qt.Unchecked)
+            cb.setCheckState(Qt.CheckState.Checked if src == 'NeteaseMusicClient' else Qt.CheckState.Unchecked)
             self.check_boxes.append(cb)
         # input boxes
         self.label_keyword = QLabel('Keywords:')
@@ -47,9 +45,9 @@ class MusicdlGUI(QWidget):
         self.results_table.setColumnCount(7)
         self.results_table.setHorizontalHeaderLabels(['ID', 'Singers', 'Songname', 'Filesize', 'Duration', 'Album', 'Source'])
         self.results_table.horizontalHeader().setStyleSheet("QHeaderView::section{background:skyblue;color:black;}")
-        self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.results_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         # mouse click menu
         self.context_menu = QMenu(self)
         self.action_download = self.context_menu.addAction('Download')
@@ -74,7 +72,7 @@ class MusicdlGUI(QWidget):
         self.setLayout(grid)
         # connect
         self.button_keyword.clicked.connect(self.search)
-        self.results_table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.results_table.customContextMenuRequested.connect(self.mouseclick)
         self.action_download.triggered.connect(self.download)
     '''initialize'''
@@ -156,7 +154,7 @@ class MusicdlGUI(QWidget):
             for _, per_source_search_result in enumerate(per_source_search_results):
                 for column, item in enumerate([str(row), per_source_search_result['singers'], per_source_search_result['song_name'], per_source_search_result['file_size'], per_source_search_result['duration'], per_source_search_result['album'], per_source_search_result['source']]):
                     self.results_table.setItem(row, column, QTableWidgetItem(item))
-                    self.results_table.item(row, column).setTextAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+                    self.results_table.item(row, column).setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
                 self.music_records.update({str(row): per_source_search_result})
                 row += 1
         # return
@@ -168,4 +166,4 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     gui = MusicdlGUI()
     gui.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
