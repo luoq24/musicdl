@@ -9,12 +9,95 @@ WeChat Official Account (微信公众号):
 import os
 import sys
 import requests
+import json
 from threading import Event
 from PyQt6.QtGui import *
 from PyQt6.QtCore import *
 from musicdl import musicdl
 from PyQt6.QtWidgets import *
 from musicdl.modules.utils.misc import sanitize_filepath
+
+
+# ---------------------------------------------------------------------------
+# Settings helpers — cache dir, load / save, dialog
+# ---------------------------------------------------------------------------
+
+def get_app_cache_dir():
+    """获取系统默认用户缓存目录"""
+    if sys.platform == 'win32':
+        base = os.environ.get('LOCALAPPDATA', os.path.expanduser('~'))
+    elif sys.platform == 'darwin':
+        base = os.path.expanduser('~/Library/Caches')
+    else:
+        base = os.environ.get('XDG_CACHE_HOME', os.path.expanduser('~/.cache'))
+    return os.path.join(base, 'musicdlgui')
+
+
+def load_settings():
+    """从系统缓存目录加载设置"""
+    cache_dir = get_app_cache_dir()
+    config_path = os.path.join(cache_dir, 'config.json')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {'download_dir': os.path.expanduser('~/Downloads'), 'checked_sources': ['NeteaseMusicClient']}
+
+
+def save_settings(settings):
+    """保存设置到系统缓存目录"""
+    cache_dir = get_app_cache_dir()
+    os.makedirs(cache_dir, exist_ok=True)
+    config_path = os.path.join(cache_dir, 'config.json')
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+class SettingsDialog(QDialog):
+    """设置对话框"""
+    def __init__(self, settings, parent=None):
+        super().__init__(parent)
+        self.settings = settings
+        self.setWindowTitle('设置')
+        self.resize(450, 150)
+        self.setModal(True)
+        layout = QVBoxLayout(self)
+
+        # 下载目录
+        dir_layout = QHBoxLayout()
+        dir_layout.addWidget(QLabel('下载目录:'))
+        self.dir_edit = QLineEdit(settings.get('download_dir', os.path.expanduser('~/Downloads')))
+        dir_layout.addWidget(self.dir_edit)
+        browse_btn = QPushButton('浏览...')
+        browse_btn.clicked.connect(self.browse_dir)
+        dir_layout.addWidget(browse_btn)
+        layout.addLayout(dir_layout)
+
+        # 按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        save_btn = QPushButton('保存')
+        save_btn.clicked.connect(self.save_and_close)
+        btn_layout.addWidget(save_btn)
+        cancel_btn = QPushButton('取消')
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+    def browse_dir(self):
+        dir_path = QFileDialog.getExistingDirectory(self, '选择下载目录', self.dir_edit.text())
+        if dir_path:
+            self.dir_edit.setText(dir_path)
+
+    def save_and_close(self):
+        self.settings['download_dir'] = self.dir_edit.text()
+        save_settings(self.settings)
+        self.accept()
 
 
 # ---------------------------------------------------------------------------
@@ -78,13 +161,17 @@ class MusicdlGUI(QWidget):
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), 'icon.ico')))
         self.resize(950, 520)
         self.initialize()
+        # settings (auto-load)
+        self.settings = load_settings()
+        self.download_dir = self.settings.get('download_dir', os.path.expanduser('~/Downloads'))
         # search sources
         self.src_names = ['QQMusicClient', 'KuwoMusicClient', 'MiguMusicClient', 'QianqianMusicClient', 'KugouMusicClient', 'NeteaseMusicClient']
         self.label_src = QLabel('Search Engine:')
         self.check_boxes = []
+        checked_sources = self.settings.get('checked_sources', ['NeteaseMusicClient'])
         for src in self.src_names:
             cb = QCheckBox(src, self)
-            cb.setCheckState(Qt.CheckState.Checked if src == 'NeteaseMusicClient' else Qt.CheckState.Unchecked)
+            cb.setCheckState(Qt.CheckState.Checked if src in checked_sources else Qt.CheckState.Unchecked)
             self.check_boxes.append(cb)
         # input boxes
         self.label_keyword = QLabel('Keywords:')
@@ -92,6 +179,7 @@ class MusicdlGUI(QWidget):
         self.button_keyword = QPushButton('Search')
         self.button_stop = QPushButton('Stop')
         self.button_stop.setEnabled(False)
+        self.button_settings = QPushButton('⚙ 设置')
         # search results table
         self.results_table = QTableWidget()
         self.results_table.setColumnCount(8)
@@ -116,10 +204,11 @@ class MusicdlGUI(QWidget):
         grid.addWidget(self.lineedit_keyword, 1, 1, 1, len(self.src_names)-2)
         grid.addWidget(self.button_keyword, 1, len(self.src_names)-2, 1, 1)
         grid.addWidget(self.button_stop, 1, len(self.src_names)-1, 1, 1)
-        grid.addWidget(self.label_status, 2, 0, 1, len(self.src_names)+1)
+        grid.addWidget(self.button_settings, 1, len(self.src_names), 1, 1)
+        grid.addWidget(self.label_status, 2, 0, 1, len(self.src_names)+2)
         grid.addWidget(self.label_download, 3, 0, 1, 1)
         grid.addWidget(self.bar_download, 3, 1, 1, len(self.src_names))
-        grid.addWidget(self.results_table, 4, 0, len(self.src_names), len(self.src_names)+1)
+        grid.addWidget(self.results_table, 4, 0, len(self.src_names), len(self.src_names)+2)
         grid.setColumnStretch(1, 1)
         grid.setRowStretch(4, 1)
         self.grid = grid
@@ -130,6 +219,7 @@ class MusicdlGUI(QWidget):
         self.results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.results_table.customContextMenuRequested.connect(self.mouseclick)
         self.action_download.triggered.connect(self.download)
+        self.button_settings.clicked.connect(self.open_settings)
         # search worker
         self.search_worker = None
     '''initialize'''
@@ -149,8 +239,8 @@ class MusicdlGUI(QWidget):
         with requests.get(song_info['download_url'], headers=self.music_client.music_clients[song_info['source']].default_download_headers, stream=True, verify=False) as resp:
             if resp.status_code == 200:
                 total_size, chunk_size, download_size = int(resp.headers['content-length']), 1024, 0
-                os.makedirs(song_info['work_dir'], exist_ok=True)
-                download_music_file_path = sanitize_filepath(os.path.join(song_info['work_dir'], song_info['song_name']+'.'+song_info['ext']))
+                os.makedirs(self.download_dir, exist_ok=True)
+                download_music_file_path = sanitize_filepath(os.path.join(self.download_dir, song_info['song_name']+'.'+song_info['ext']))
                 with open(download_music_file_path, 'wb') as fp:
                     for chunk in resp.iter_content(chunk_size=chunk_size):
                         if not chunk: continue
@@ -290,6 +380,23 @@ class MusicdlGUI(QWidget):
         self.search_worker.search_finished.connect(self.on_search_finished)
         self.search_worker.finished.connect(lambda: setattr(self, 'music_client', self.search_worker.get_music_client()))
         self.search_worker.start()
+
+    def open_settings(self):
+        """打开设置对话框"""
+        dialog = SettingsDialog(self.settings, self)
+        dialog.exec()
+        self.download_dir = self.settings.get('download_dir', os.path.expanduser('~/Downloads'))
+
+    def _get_checked_sources(self):
+        """获取当前勾选的搜索引擎列表"""
+        return [cb.text() for cb in self.check_boxes if cb.isChecked()]
+
+    def closeEvent(self, event):
+        """关闭窗口时自动保存设置"""
+        self.settings['download_dir'] = self.download_dir
+        self.settings['checked_sources'] = self._get_checked_sources()
+        save_settings(self.settings)
+        super().closeEvent(event)
 
 
 '''tests'''
