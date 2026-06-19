@@ -580,15 +580,26 @@ class NeteaseMusicClient(BaseMusicClient):
         # return
         return song_info
     '''_parsewiththirdpartapis'''
-    def _parsewiththirdpartapis(self, search_result: dict, request_overrides: dict = None):
+    def _parsewiththirdpartapis(self, search_result: dict, request_overrides: dict = None, stop_event = None):
         if (cookies := self.default_cookies or (request_overrides := request_overrides or {}).get('cookies')) and (cookies != DEFAULT_COOKIES): return SongInfo(source=self.source, raw_data={'quality': MUSIC_QUALITIES[-1]})
         l1_parser_funcs = [self._parsewithcggapi, self._parsewithbugpkapi, self._parsewithrrvennapi, self._parsewithbileizhenapi, self._parsewithxuanluogeapi, self._parsewithznnuapi, self._parsewithkangqiovoapi, self._parsewithxiaoqinapi, self._parsewithxingmianapi, self._parsewithhaitangwapi, self._parsewithguyueiapi] # svip
         l2_parser_funcs = [self._parsewithvincentzyu233api, self._parsewithjfjtapi] # svip account but some qualities are missing
         l3_parser_funcs = [self._parsewithnanorockyapi, self._parsewithmanshuoapi, self._parsewithcunyuapi, self._parsewithqjqqapi, self._parsewithyutangxiaowuapi, self._parsewithrxtoolapi, self._parsewithxiaotapi, self._parsewithgdstudioapi, self._parsewithbyfunsapi, self._parsewithxcvtsapi, self._parsewithceseetapi, self._parsewithxianyuwapi] # vip
         l4_parser_funcs = [self._parsewithxunjinluapi, self._parsewithlblbapi] # invalid account or some unstable accounts
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+        song_info_flac = SongInfo(source=self.source, raw_data={'search': search_result, 'download': {}, 'lyric': {}, 'quality': MUSIC_QUALITIES[-1]})
+        # Try each parser with a per-parser timeout to prevent any single API from blocking too long.
+        # Individual parsers already have per-request timeouts, but an unreachable host can still
+        # block for timeout * num_qualities seconds. We add a global per-parser cap of 15 seconds.
+        parser_timeout = 15
         for parser_func in (l1_parser_funcs + l2_parser_funcs + l3_parser_funcs + l4_parser_funcs):
-            song_info_flac = SongInfo(source=self.source, raw_data={'search': search_result, 'download': {}, 'lyric': {}, 'quality': MUSIC_QUALITIES[-1]})
-            with suppress(Exception): song_info_flac = parser_func(search_result, request_overrides)
+            if stop_event is not None and stop_event.is_set(): break
+            try:
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(parser_func, search_result, request_overrides)
+                    song_info_flac = future.result(timeout=parser_timeout)
+            except (Exception, FuturesTimeoutError):
+                song_info_flac = SongInfo(source=self.source, raw_data={'search': search_result, 'download': {}, 'lyric': {}, 'quality': MUSIC_QUALITIES[-1]})
             if song_info_flac.with_valid_download_url and song_info_flac.ext in AudioLinkTester.VALID_AUDIO_EXTS: break
         return song_info_flac
     '''_getsongmetainfo'''
@@ -632,7 +643,7 @@ class NeteaseMusicClient(BaseMusicClient):
         return song_info
     '''_search'''
     @usesearchheaderscookies
-    def _search(self, keyword: str = '', search_url: dict = {}, request_overrides: dict = None, song_infos: list = [], progress: Progress = None, progress_id: int = 0):
+    def _search(self, keyword: str = '', search_url: dict = {}, request_overrides: dict = None, song_infos: list = [], progress: Progress = None, progress_id: int = 0, stop_event = None):
         # init
         request_overrides, lossless_quality_is_sufficient = request_overrides or {}, False if (cookies := self.default_cookies or request_overrides.get('cookies')) and (cookies != DEFAULT_COOKIES) else True
         search_meta = copy.deepcopy(search_url); search_url, page_no = search_meta.pop('url'), search_meta.pop('page')
@@ -642,12 +653,16 @@ class NeteaseMusicClient(BaseMusicClient):
             (resp := self.post(search_url, **search_meta, **request_overrides)).raise_for_status()
             task_id = progress.add_task(f"{self.source}._search >>> Start to process the 0th search result on page {page_no}", total=None, completed=0)
             for search_result_idx, search_result in enumerate(resp2json(resp)['result']['songs']):
+                # --check stop event
+                if stop_event is not None and stop_event.is_set(): break
                 # --update progress
                 progress.update(task_id, description=f'{self.source}._search >>> Start to process the {search_result_idx+1}th search result on page {page_no}', completed=search_result_idx+1, total=search_result_idx+1)
                 # --init song info
                 song_info = SongInfo(source=self.source, raw_data={'search': search_result, 'download': {}, 'lyric': {}, 'quality': MUSIC_QUALITIES[-1]})
-                # --parse with third part apis
-                song_info_flac = self._parsewiththirdpartapis(search_result=search_result, request_overrides=request_overrides)
+                # --parse with third part apis (pass stop_event so parsers can short-circuit)
+                song_info_flac = self._parsewiththirdpartapis(search_result=search_result, request_overrides=request_overrides, stop_event=stop_event)
+                # --check stop event after potentially long third-party parse
+                if stop_event is not None and stop_event.is_set(): break
                 # --parse with official apis
                 with suppress(Exception): song_info = self._parsewithofficialapiv1(search_result=search_result, song_info_flac=song_info_flac, lossless_quality_is_sufficient=lossless_quality_is_sufficient, request_overrides=request_overrides)
                 # --append to song_infos

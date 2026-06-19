@@ -13,7 +13,7 @@ import random
 import pickle
 import requests
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Event
 from rich.text import Text
 from itertools import chain
 from datetime import datetime
@@ -122,11 +122,11 @@ class BaseMusicClient():
         return unique_song_infos
     '''_search'''
     @usesearchheaderscookies
-    def _search(self, keyword: str = '', search_url: str = '', request_overrides: dict = None, song_infos: list = [], progress: Progress = None, progress_id: int = 0):
+    def _search(self, keyword: str = '', search_url: str = '', request_overrides: dict = None, song_infos: list = [], progress: Progress = None, progress_id: int = 0, stop_event: Event = None):
         raise NotImplementedError('not be implemented')
     '''search'''
     @usesearchheaderscookies
-    def search(self, keyword: str, num_threadings: int = 5, request_overrides: dict = None, rule: dict = None, main_process_context: Progress = None, main_progress_id: int = None, main_progress_lock: Lock = None) -> list[SongInfo]:
+    def search(self, keyword: str, num_threadings: int = 5, request_overrides: dict = None, rule: dict = None, main_process_context: Progress = None, main_progress_id: int = None, main_progress_lock: Lock = None, stop_event: Event = None, on_result_callback = None) -> list[SongInfo]:
         # logging
         self.logger_handle.info(f'Start to search music files using {self.source}.', disable_print=self.disable_print)
         # construct search urls
@@ -135,6 +135,7 @@ class BaseMusicClient():
         owns_progress = True if main_process_context is None else False
         if owns_progress: main_process_context = Progress(TextColumn("{task.description}"), BarColumn(bar_width=None), MofNCompleteColumn(), TimeRemainingColumn(), refresh_per_second=10); main_process_context.__enter__()
         main_progress_lock = Lock() if main_progress_lock is None else main_progress_lock
+        if stop_event is None: stop_event = Event()
         with main_progress_lock:
             progress_id = main_process_context.add_task(f"{self.source}.search >>> Completed (0/{len(search_urls)}) Search URLs", total=len(search_urls))
             if main_progress_id is not None:
@@ -143,14 +144,35 @@ class BaseMusicClient():
                 main_process_context.update(main_progress_id, description=f"Search From Sources >>> Completed ({int(main_process_context.tasks[main_progress_id].completed)}/{cur_total + len(search_urls)}) Search URLs")
         submitted_tasks = []; song_infos: dict[str, list[SongInfo]] = {}
         with ThreadPoolExecutor(max_workers=num_threadings) as pool:
-            for search_url_idx, search_url in enumerate(search_urls): song_infos[str(search_url_idx)] = []; submitted_tasks.append(pool.submit(self._search, keyword, search_url, request_overrides, song_infos[str(search_url_idx)], main_process_context, progress_id))
+            for search_url_idx, search_url in enumerate(search_urls): song_infos[str(search_url_idx)] = []; submitted_tasks.append(pool.submit(self._search, keyword, search_url, request_overrides, song_infos[str(search_url_idx)], main_process_context, progress_id, stop_event))
+            reported_identifiers = set()  # track already-reported results for delta callback
             for future in as_completed(submitted_tasks):
-                future.result()
+                if stop_event.is_set(): break
+                try:
+                    future.result(timeout=1)
+                except Exception:
+                    # future.result() may raise TimeoutError; keep polling
+                    # until done or stop_event is set
+                    while not future.done():
+                        if stop_event.is_set(): break
+                        try:
+                            future.result(timeout=0.5)
+                            break
+                        except Exception:
+                            pass
+                    if stop_event.is_set(): break
                 with main_progress_lock:
                     main_process_context.advance(progress_id, 1); num_searched_urls = int(main_process_context.tasks[progress_id].completed)
                     main_process_context.update(progress_id, description=f"{self.source}.search >>> Completed ({num_searched_urls}/{len(search_urls)}) Search URLs")
                     main_progress_id is not None and main_process_context.advance(main_progress_id, 1)
                     main_progress_id is not None and main_process_context.update(main_progress_id, description=f"Search From Sources >>> Completed ({int(main_process_context.tasks[main_progress_id].completed)}/{int(main_process_context.tasks[main_progress_id].total or 0)}) Search URLs")
+                # Progressive result display: callback with only new (delta) results
+                if on_result_callback:
+                    all_infos = list(chain.from_iterable(song_infos.values()))
+                    deduped = self._removeduplicates(song_infos=all_infos)
+                    valid = [si for si in deduped if isinstance(si, SongInfo) and si.with_valid_download_url]
+                    delta = [si for si in valid if (getattr(si, 'identifier', id(si)) not in reported_identifiers) and not reported_identifiers.add(getattr(si, 'identifier', id(si)))]
+                    if delta: on_result_callback(self.source, delta)
         song_infos, work_dir, work_dir_to_song_info = self._removeduplicates(song_infos=list(chain.from_iterable(song_infos.values()))), self._constructuniqueworkdir(keyword=keyword), defaultdict(list)
         for song_info in song_infos:
             if not isinstance(song_info, SongInfo) or not song_info.with_valid_download_url: continue

@@ -10,7 +10,7 @@ import sys
 import copy
 import click
 import json_repair
-from threading import Lock
+from threading import Lock, Event
 from itertools import chain
 from contextlib import suppress
 from collections.abc import Iterable
@@ -103,15 +103,37 @@ class MusicClient():
                 final_selected_song_infos.extend(self.printandselectsearchresults({song_info.source: song_info.episodes})) if song_info.episodes else final_selected_song_infos.append(song_info)
             self.download(final_selected_song_infos)
     '''search'''
-    def search(self, keyword) -> dict[str, list[SongInfo]]:
+    def search(self, keyword, stop_event: Event = None, on_result_callback = None) -> dict[str, list[SongInfo]]:
         self.logger_handle.info(f'Searching {colorize(keyword, "highlight")} From {colorize("|".join(self.music_sources), "highlight")}')
         max_workers, main_progress_lock = min(len(self.music_sources), 10), Lock()
+        if stop_event is None: stop_event = Event()
         with Progress(TextColumn("{task.description}"), BarColumn(bar_width=None), MofNCompleteColumn(), TimeRemainingColumn(), refresh_per_second=10) as main_process_context:
             main_progress_id = main_process_context.add_task(f"Search From Sources >>> Completed (0/0) Search URLs", total=0)
             def search_func(ms):
-                try: return ms, self.music_clients[ms].search(keyword=keyword, num_threadings=self.clients_threadings[ms], request_overrides=self.requests_overrides[ms], rule=self.search_rules[ms], main_process_context=main_process_context, main_progress_id=main_progress_id, main_progress_lock=main_progress_lock)
+                try: return ms, self.music_clients[ms].search(keyword=keyword, num_threadings=self.clients_threadings[ms], request_overrides=self.requests_overrides[ms], rule=self.search_rules[ms], main_process_context=main_process_context, main_progress_id=main_progress_id, main_progress_lock=main_progress_lock, stop_event=stop_event, on_result_callback=on_result_callback)
                 except Exception as err: self.logger_handle.error(f'MusicClient.{ms}.search >>> {keyword} (Error: {err})'); return ms, []
-            with ThreadPoolExecutor(max_workers=max_workers) as ex: return dict(ex.map(search_func, self.music_sources))
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futures = [ex.submit(search_func, ms) for ms in self.music_sources]
+                results = {}
+                for future in futures:
+                    if stop_event.is_set(): break
+                    try:
+                        # Use timeout so we can periodically check stop_event
+                        # even if a future is stuck in a long API call chain
+                        k, v = future.result(timeout=1)
+                        results[k] = v
+                    except Exception:
+                        # future.result() may raise TimeoutError; retry until
+                        # the future is done or stop_event is set
+                        while not future.done():
+                            if stop_event.is_set(): break
+                            try:
+                                k, v = future.result(timeout=0.5)
+                                results[k] = v
+                                break
+                            except Exception:
+                                pass
+                return results
     '''download'''
     def download(self, song_infos: list[dict[SongInfo]] | dict[str, list[SongInfo]]) -> list[SongInfo]:
         classified_song_infos: dict[str, list[SongInfo]] = {}; downloaded_song_infos: list[SongInfo] = []
