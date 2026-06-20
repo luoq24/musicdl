@@ -24,7 +24,7 @@ from pathvalidate import sanitize_filepath
 from urllib.parse import urlparse, parse_qs
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from ..utils.hosts import NETEASE_MUSIC_HOSTS, hostmatchessuffix, obtainhostname
-from ..utils.neteaseutils import EapiCryptoUtils, MUSIC_QUALITIES, DEFAULT_COOKIES
+from ..utils.neteaseutils import EapiCryptoUtils, MUSIC_QUALITIES, DEFAULT_COOKIES, QUALITY_NAMES
 from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn, MofNCompleteColumn
 from ..utils import resp2json, legalizestring, safeextractfromdict, usesearchheaderscookies, extractdurationsecondsfromlrc, useparseheaderscookies, safefunctioncall, cleanlrc, SongInfo, AudioLinkTester, IOUtils, SongInfoUtils, RandomIPGenerator
 warnings.filterwarnings('ignore')

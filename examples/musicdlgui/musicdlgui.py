@@ -22,6 +22,18 @@ from musicdl.modules.utils.misc import sanitize_filepath
 # Settings helpers — cache dir, load / save, dialog
 # ---------------------------------------------------------------------------
 
+# 品质名称映射（用于显示）
+QUALITY_NAMES = {
+    'jymaster': '极品音质',
+    'dolby': '杜比全景声',
+    'sky': '天空音质',
+    'jyeffect': '高解析音质',
+    'hires': 'Hi-Res',
+    'lossless': '无损音质',
+    'exhigh': '超高音质',
+    'standard': '标准音质'
+}
+
 def get_app_cache_dir():
     """获取系统默认用户缓存目录"""
     if sys.platform == 'win32':
@@ -43,7 +55,7 @@ def load_settings():
                 return json.load(f)
         except Exception:
             pass
-    return {'download_dir': os.path.expanduser('~/Downloads'), 'checked_sources': ['NeteaseMusicClient']}
+    return {'download_dir': os.path.expanduser('~/Downloads'), 'checked_sources': ['NeteaseMusicClient'], 'min_file_size_mb': 0, 'return_all_qualities': True}
 
 
 def save_settings(settings):
@@ -64,7 +76,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings
         self.setWindowTitle('设置')
-        self.resize(450, 150)
+        self.resize(450, 200)
         self.setModal(True)
         layout = QVBoxLayout(self)
 
@@ -77,6 +89,24 @@ class SettingsDialog(QDialog):
         browse_btn.clicked.connect(self.browse_dir)
         dir_layout.addWidget(browse_btn)
         layout.addLayout(dir_layout)
+
+        # 最小文件大小（MB）
+        size_layout = QHBoxLayout()
+        size_layout.addWidget(QLabel('最小文件大小(MB):'))
+        self.min_size_spin = QSpinBox()
+        self.min_size_spin.setRange(0, 100)  # 0-100MB范围
+        self.min_size_spin.setValue(int(settings.get('min_file_size_mb', 0)))
+        self.min_size_spin.setSuffix(' MB')
+        size_layout.addWidget(self.min_size_spin)
+        size_layout.addWidget(QLabel('(0表示不限制)'))
+        layout.addLayout(size_layout)
+
+        # 显示所有品质选项
+        quality_layout = QHBoxLayout()
+        self.quality_checkbox = QCheckBox('显示所有可用品质（否则只显示最高品质）')
+        self.quality_checkbox.setChecked(settings.get('return_all_qualities', True))
+        quality_layout.addWidget(self.quality_checkbox)
+        layout.addLayout(quality_layout)
 
         # 按钮
         btn_layout = QHBoxLayout()
@@ -96,6 +126,8 @@ class SettingsDialog(QDialog):
 
     def save_and_close(self):
         self.settings['download_dir'] = self.dir_edit.text()
+        self.settings['min_file_size_mb'] = self.min_size_spin.value()
+        self.settings['return_all_qualities'] = self.quality_checkbox.isChecked()
         save_settings(self.settings)
         self.accept()
 
@@ -107,10 +139,11 @@ class SearchWorker(QThread):
     search_finished = pyqtSignal(object, str)
     partial_result = pyqtSignal(str, list)  # (source_name, list_of_SongInfo_dicts)
 
-    def __init__(self, music_sources, keyword):
+    def __init__(self, music_sources, keyword, search_rules=None):
         super().__init__()
         self.music_sources = music_sources
         self.keyword = keyword
+        self.search_rules = search_rules or {}
         self.music_client = None
         self.stop_event = Event()
         self._accumulated = {}  # {source: [SongInfo, ...]} for dedup
@@ -119,7 +152,7 @@ class SearchWorker(QThread):
         self.stop_event.set()
 
     def run(self):
-        self.music_client = musicdl.MusicClient(music_sources=self.music_sources)
+        self.music_client = musicdl.MusicClient(music_sources=self.music_sources, search_rules=self.search_rules)
         import inspect
         sig = inspect.signature(self.music_client.search)
         params = list(sig.parameters.keys())
@@ -181,7 +214,7 @@ class MusicdlGUI(QWidget):
             self.check_boxes.append(cb)
         # input boxes
         self.label_keyword = QLabel('Keywords:')
-        self.lineedit_keyword = QLineEdit('尾戒')
+        self.lineedit_keyword = QLineEdit()
         self.button_keyword = QPushButton('Search')
         self.button_stop = QPushButton('Stop')
         self.button_stop.setEnabled(False)
@@ -228,12 +261,40 @@ class MusicdlGUI(QWidget):
         self.button_settings.clicked.connect(self.open_settings)
         # search worker
         self.search_worker = None
-    '''initialize'''
     def initialize(self):
         self.search_results = {}
         self.music_records = {}
         self.selected_music_idx = -10000
         self.music_client = None
+
+    def _parse_file_size_to_mb(self, file_size_str):
+        """将文件大小字符串转换为MB数值"""
+        if not file_size_str:
+            return 0
+        try:
+            # 处理类似 "5.23MB" 或 "1024KB" 的格式
+            file_size_str = str(file_size_str).upper().strip()
+            if 'GB' in file_size_str:
+                return float(file_size_str.replace('GB', '').strip()) * 1024
+            elif 'MB' in file_size_str:
+                return float(file_size_str.replace('MB', '').strip())
+            elif 'KB' in file_size_str:
+                return float(file_size_str.replace('KB', '').strip()) / 1024
+            elif 'B' in file_size_str:
+                return float(file_size_str.replace('B', '').strip()) / (1024 * 1024)
+            else:
+                # 假设已经是MB
+                return float(file_size_str)
+        except:
+            return 0
+
+    def _filter_by_min_file_size(self, song_info):
+        """根据最小文件大小设置过滤搜索结果"""
+        min_size_mb = self.settings.get('min_file_size_mb', 0)
+        if min_size_mb <= 0:
+            return True  # 不限制
+        file_size_mb = self._parse_file_size_to_mb(song_info.get('file_size', ''))
+        return file_size_mb >= min_size_mb
     '''mouseclick'''
     def mouseclick(self):
         self.context_menu.move(QCursor().pos())
@@ -277,28 +338,88 @@ class MusicdlGUI(QWidget):
 
         self.search_results = results
 
-        # showing
+        # showing with file size filter and quality expansion
         count, row = 0, 0
+        return_all_qualities = self.settings.get('return_all_qualities', True)
+
         for per_source_search_results in self.search_results.values():
-            count += len(per_source_search_results)
+            # 展开所有品质或只保留主要结果
+            expanded_results = []
+            for r in per_source_search_results:
+                if return_all_qualities and hasattr(r, 'episodes') and r.episodes:
+                    # 添加主结果（最高品质）
+                    if self._filter_by_min_file_size(r):
+                        expanded_results.append(r)
+                    # 添加其他品质
+                    for ep in r.episodes:
+                        ep_dict = ep.todict() if hasattr(ep, 'todict') else ep
+                        if self._filter_by_min_file_size(ep_dict):
+                            expanded_results.append(ep_dict)
+                else:
+                    if self._filter_by_min_file_size(r):
+                        expanded_results.append(r)
+            count += len(expanded_results)
+
         self.results_table.setRowCount(count)
         for _, (_, per_source_search_results) in enumerate(self.search_results.items()):
-            for _, per_source_search_result in enumerate(per_source_search_results):
-                row_data = [
-                    str(row),
-                    per_source_search_result['singers'],
-                    per_source_search_result['song_name'],
-                    per_source_search_result['file_size'],
-                    per_source_search_result['duration'],
-                    per_source_search_result['album'],
-                    '',
-                    per_source_search_result['source'],
-                ]
-                for column, item in enumerate(row_data):
-                    self.results_table.setItem(row, column, QTableWidgetItem(item))
-                    self.results_table.item(row, column).setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
-                self.music_records.update({str(row): per_source_search_result})
-                row += 1
+            # 展开所有品质或只保留主要结果
+            for r in per_source_search_results:
+                if return_all_qualities and hasattr(r, 'episodes') and r.episodes:
+                    # 处理主结果
+                    if self._filter_by_min_file_size(r):
+                        row_data = [
+                            str(row),
+                            r['singers'],
+                            r['song_name'],
+                            r['file_size'],
+                            r['duration'],
+                            r['album'],
+                            QUALITY_NAMES.get(getattr(r, 'raw_data', {}).get('quality', ''), r.get('quality', '')),
+                            r['source'],
+                        ]
+                        for column, item in enumerate(row_data):
+                            self.results_table.setItem(row, column, QTableWidgetItem(item))
+                            self.results_table.item(row, column).setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+                        self.music_records.update({str(row): r})
+                        row += 1
+                    # 处理其他品质
+                    for ep in r.episodes:
+                        ep_dict = ep.todict() if hasattr(ep, 'todict') else ep
+                        if self._filter_by_min_file_size(ep_dict):
+                            quality_label = QUALITY_NAMES.get(getattr(ep, 'raw_data', {}).get('quality', ''), '')
+                            row_data = [
+                                str(row),
+                                ep_dict['singers'],
+                                ep_dict['song_name'] + f' [{quality_label}]' if quality_label else ep_dict['song_name'],
+                                ep_dict['file_size'],
+                                ep_dict['duration'],
+                                ep_dict['album'],
+                                quality_label,
+                                ep_dict['source'],
+                            ]
+                            for column, item in enumerate(row_data):
+                                self.results_table.setItem(row, column, QTableWidgetItem(item))
+                                self.results_table.item(row, column).setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+                            self.music_records.update({str(row): ep_dict})
+                            row += 1
+                else:
+                    # 传统模式：不过滤品质
+                    if self._filter_by_min_file_size(r):
+                        row_data = [
+                            str(row),
+                            r['singers'],
+                            r['song_name'],
+                            r['file_size'],
+                            r['duration'],
+                            r['album'],
+                            '',
+                            r['source'],
+                        ]
+                        for column, item in enumerate(row_data):
+                            self.results_table.setItem(row, column, QTableWidgetItem(item))
+                            self.results_table.item(row, column).setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+                        self.music_records.update({str(row): r})
+                        row += 1
         # re-enable button
         self.button_keyword.setEnabled(True)
         self.button_keyword.setText('Search')
@@ -314,12 +435,19 @@ class MusicdlGUI(QWidget):
     '''handle partial result (incremental display)'''
     def on_partial_result(self, source, song_infos):
         """Called when a source produces new results during search."""
+        return_all_qualities = self.settings.get('return_all_qualities', True)
         for song_info in song_infos:
+            # 应用文件大小过滤
+            if not self._filter_by_min_file_size(song_info):
+                continue
+
             # Accumulate in search_results
             self.search_results.setdefault(source, []).append(song_info)
-            # Add row to table
+
+            # Add main result row to table
             row = self.results_table.rowCount()
             self.results_table.insertRow(row)
+            quality_label = QUALITY_NAMES.get(getattr(song_info, 'raw_data', {}).get('quality', ''), '')
             row_data = [
                 str(row),
                 song_info['singers'],
@@ -327,13 +455,37 @@ class MusicdlGUI(QWidget):
                 song_info['file_size'],
                 song_info['duration'],
                 song_info['album'],
-                '',
+                quality_label,
                 song_info['source'],
             ]
             for column, item in enumerate(row_data):
                 self.results_table.setItem(row, column, QTableWidgetItem(item))
                 self.results_table.item(row, column).setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
             self.music_records.update({str(row): song_info})
+
+            # If return_all_qualities and has episodes (other qualities), add them too
+            if return_all_qualities and hasattr(song_info, 'episodes') and song_info.episodes:
+                for ep in song_info.episodes:
+                    ep_dict = ep.todict() if hasattr(ep, 'todict') else ep
+                    if self._filter_by_min_file_size(ep_dict):
+                        ep_row = self.results_table.rowCount()
+                        self.results_table.insertRow(ep_row)
+                        ep_quality = QUALITY_NAMES.get(getattr(ep, 'raw_data', {}).get('quality', ''), '')
+                        ep_row_data = [
+                            str(ep_row),
+                            ep_dict['singers'],
+                            ep_dict['song_name'] + f' [{ep_quality}]' if ep_quality else ep_dict['song_name'],
+                            ep_dict['file_size'],
+                            ep_dict['duration'],
+                            ep_dict['album'],
+                            ep_quality,
+                            ep_dict['source'],
+                        ]
+                        for column, item in enumerate(ep_row_data):
+                            self.results_table.setItem(ep_row, column, QTableWidgetItem(item))
+                            self.results_table.item(ep_row, column).setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+                        self.music_records.update({str(ep_row): ep_dict})
+
         total = sum(len(v) for v in self.search_results.values())
         self.label_status.setText(f'Searching... {total} results found so far.')
 
@@ -373,6 +525,16 @@ class MusicdlGUI(QWidget):
                 music_sources.append(cb.text())
         # keyword
         keyword = self.lineedit_keyword.text()
+
+        # 构建搜索规则 - 根据设置决定是否返回所有品质
+        search_rules = {}
+        if self.settings.get('return_all_qualities', True):
+            # 对于网易云音乐，设置规则来获取多种品质
+            for source in music_sources:
+                if 'Netease' in source:
+                    # 这个规则会在底层被用来决定是否返回所有品质
+                    search_rules[source] = {'return_all_qualities': True}
+
         # disable search button, enable stop button
         self.button_keyword.setEnabled(False)
         self.button_keyword.setText('Searching...')
@@ -381,7 +543,7 @@ class MusicdlGUI(QWidget):
         # clear table
         self.results_table.setRowCount(0)
         # run search in background thread
-        self.search_worker = SearchWorker(music_sources, keyword)
+        self.search_worker = SearchWorker(music_sources, keyword, search_rules)
         self.search_worker.partial_result.connect(self.on_partial_result)
         self.search_worker.search_finished.connect(self.on_search_finished)
         self.search_worker.finished.connect(lambda: setattr(self, 'music_client', self.search_worker.get_music_client()))
@@ -392,6 +554,11 @@ class MusicdlGUI(QWidget):
         dialog = SettingsDialog(self.settings, self)
         dialog.exec()
         self.download_dir = self.settings.get('download_dir', os.path.expanduser('~/Downloads'))
+        # 更新设置信息
+        min_size = self.settings.get('min_file_size_mb', 0)
+        return_all_q = self.settings.get('return_all_qualities', True)
+        if min_size > 0 or return_all_q:
+            print(f"已更新设置 - 最小文件大小: {min_size}MB, 显示所有品质: {return_all_q}")
 
     def _get_checked_sources(self):
         """获取当前勾选的搜索引擎列表"""
