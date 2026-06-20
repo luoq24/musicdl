@@ -215,6 +215,9 @@ class MusicdlGUI(QWidget):
         # input boxes
         self.label_keyword = QLabel('Keywords:')
         self.lineedit_keyword = QLineEdit()
+        # Ctrl+Enter 快捷键触发搜索
+        self.search_shortcut = QShortcut(QKeySequence('Ctrl+Return'), self.lineedit_keyword)
+        self.search_shortcut.activated.connect(self.search)
         self.button_keyword = QPushButton('Search')
         self.button_stop = QPushButton('Stop')
         self.button_stop.setEnabled(False)
