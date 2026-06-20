@@ -120,11 +120,17 @@ class SearchWorker(QThread):
 
     def run(self):
         self.music_client = musicdl.MusicClient(music_sources=self.music_sources)
-        results = self.music_client.search(
-            keyword=self.keyword,
-            stop_event=self.stop_event,
-            on_result_callback=self._on_partial_result
-        )
+        import inspect
+        sig = inspect.signature(self.music_client.search)
+        params = list(sig.parameters.keys())
+        if 'stop_event' in params:
+            results = self.music_client.search(
+                keyword=self.keyword,
+                stop_event=self.stop_event,
+                on_result_callback=self._on_partial_result
+            )
+        else:
+            results = self.music_client.search(keyword=self.keyword)
         self.search_finished.emit(results, '')
 
     def _on_partial_result(self, source, song_infos):
