@@ -227,6 +227,10 @@ class MusicdlGUI(QWidget):
         self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # 启用列标题点击排序
+        self.results_table.horizontalHeader().setSectionsClickable(True)
+        self.results_table.horizontalHeader().setSortIndicatorShown(True)
+        self.results_table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
         # mouse click menu
         self.context_menu = QMenu(self)
         self.action_download = self.context_menu.addAction('Download')
@@ -238,7 +242,14 @@ class MusicdlGUI(QWidget):
         # grid
         grid = QGridLayout()
         grid.addWidget(self.label_src, 0, 0, 1, 1)
-        for idx, cb in enumerate(self.check_boxes): grid.addWidget(cb, 0, idx+1, 1, 1)
+        # 复选框用水平布局包裹，避免Grid列拉伸导致的间距不均
+        cb_layout = QHBoxLayout()
+        cb_layout.setSpacing(12)
+        for cb in self.check_boxes:
+            cb_layout.addWidget(cb)
+        cb_widget = QWidget()
+        cb_widget.setLayout(cb_layout)
+        grid.addWidget(cb_widget, 0, 1, 1, len(self.src_names))
         grid.addWidget(self.label_keyword, 1, 0, 1, 1)
         grid.addWidget(self.lineedit_keyword, 1, 1, 1, len(self.src_names)-2)
         grid.addWidget(self.button_keyword, 1, len(self.src_names)-2, 1, 1)
@@ -266,6 +277,9 @@ class MusicdlGUI(QWidget):
         self.music_records = {}
         self.selected_music_idx = -10000
         self.music_client = None
+        # 排序状态
+        self._sort_column = -1
+        self._sort_order = Qt.SortOrder.AscendingOrder
 
     def _parse_file_size_to_mb(self, file_size_str):
         """将文件大小字符串转换为MB数值"""
@@ -295,6 +309,153 @@ class MusicdlGUI(QWidget):
             return True  # 不限制
         file_size_mb = self._parse_file_size_to_mb(song_info.get('file_size', ''))
         return file_size_mb >= min_size_mb
+
+    def _parse_duration_to_seconds(self, duration_str):
+        """将时长字符串（如 04:30 或 1:02:30）转换为总秒数"""
+        if not duration_str:
+            return 0
+        try:
+            parts = str(duration_str).strip().split(':')
+            if len(parts) == 3:  # HH:MM:SS
+                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            elif len(parts) == 2:  # MM:SS
+                return int(parts[0]) * 60 + int(parts[1])
+            else:
+                return float(duration_str)
+        except (ValueError, TypeError):
+            return 0
+
+    def _get_sort_key_for_row(self, row, column):
+        """获取指定行、列的排序键值（用于自定义排序比较）"""
+        item = self.results_table.item(row, column)
+        if item is None:
+            return ''
+        text = item.text()
+        if column == 0:  # ID列 - 按数值排序
+            try:
+                return (0, int(text))
+            except ValueError:
+                return (0, 0)
+        elif column == 3:  # Filesize列 - 按解析后的MB数值排序
+            return (1, self._parse_file_size_to_mb(text))
+        elif column == 4:  # Duration列 - 按总秒数排序
+            return (2, self._parse_duration_to_seconds(text))
+        else:  # 其他列 - 按字符串排序
+            return (3, text.lower())
+
+    '''点击列表标题时按该列排序'''
+    def on_header_clicked(self, column_index):
+        # 切换排序方向：同一切换方向，不同列默认升序
+        if column_index == self._sort_column:
+            self._sort_order = Qt.SortOrder.DescendingOrder if self._sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
+        else:
+            self._sort_column = column_index
+            self._sort_order = Qt.SortOrder.AscendingOrder
+
+        # 保存当前music_records的快照，用于重建映射
+        old_music_records = dict(self.music_records)
+
+        # 收集所有行数据并按排序列的值排序
+        row_count = self.results_table.rowCount()
+        rows_data = []
+        for row in range(row_count):
+            sort_key = self._get_sort_key_for_row(row, column_index)
+            # 收集每行的所有单元格文本和对应的 music_records key
+            row_texts = []
+            for col in range(self.results_table.columnCount()):
+                item = self.results_table.item(row, col)
+                row_texts.append(item.text() if item else '')
+            # 找到该行在 music_records 中对应的 key
+            record_key = None
+            for key, val in self.music_records.items():
+                # 通过ID列匹配
+                id_item = self.results_table.item(row, 0)
+                if id_item and key == id_item.text():
+                    record_key = key
+                    break
+            rows_data.append((sort_key, row_texts, record_key))
+
+        # 排序
+        reverse = (self._sort_order == Qt.SortOrder.DescendingOrder)
+        rows_data.sort(key=lambda x: x[0], reverse=reverse)
+
+        # 重新填充表格
+        for new_row, (_, row_texts, record_key) in enumerate(rows_data):
+            for col, text in enumerate(row_texts):
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+                self.results_table.setItem(new_row, col, item)
+
+        # 更新 music_records 的映射关系 + 更新ID列为新的行号
+        self.music_records = {}
+        for new_row, (_, row_texts, _) in enumerate(rows_data):
+            old_id_text = row_texts[0]  # 原来的ID文本
+            # 从旧的music_records中取出数据（用旧ID作为key）
+            old_record = old_music_records.pop(old_id_text, None)
+            if old_record is not None:
+                self.music_records[str(new_row)] = old_record
+            # 更新ID列显示为新的行号
+            id_item = self.results_table.item(new_row, 0)
+            if id_item:
+                id_item.setText(str(new_row))
+
+        # 在表头显示排序指示（通过setSortIndicator）
+        self.results_table.horizontalHeader().setSortIndicator(column_index, self._sort_order)
+
+    '''搜索完成后自动多列排序：Singers(升序) -> Filesize(升序)'''
+    def _auto_sort_after_search(self):
+        row_count = self.results_table.rowCount()
+        if row_count <= 1:
+            return
+
+        # 保存当前music_records的快照
+        old_music_records = dict(self.music_records)
+
+        # 收集所有行数据，按多列生成排序键
+        rows_data = []
+        for row in range(row_count):
+            # 排序键：(Singers字符串, Filesize数值)
+            key_singers = ''
+            singers_item = self.results_table.item(row, 1)
+            if singers_item:
+                key_singers = singers_item.text().lower()
+            key_filesize = 0
+            filesize_item = self.results_table.item(row, 3)
+            if filesize_item:
+                key_filesize = self._parse_file_size_to_mb(filesize_item.text())
+            sort_key = (key_singers, key_filesize)
+
+            row_texts = []
+            for col in range(self.results_table.columnCount()):
+                item = self.results_table.item(row, col)
+                row_texts.append(item.text() if item else '')
+            rows_data.append((sort_key, row_texts))
+
+        # 按多键排序（均为升序）
+        rows_data.sort(key=lambda x: x[0])
+
+        # 重新填充表格
+        for new_row, (_, row_texts) in enumerate(rows_data):
+            for col, text in enumerate(row_texts):
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+                self.results_table.setItem(new_row, col, item)
+
+        # 重建 music_records 映射 + 更新ID列
+        self.music_records = {}
+        for new_row, (_, row_texts) in enumerate(rows_data):
+            old_id_text = row_texts[0]
+            old_record = old_music_records.pop(old_id_text, None)
+            if old_record is not None:
+                self.music_records[str(new_row)] = old_record
+            id_item = self.results_table.item(new_row, 0)
+            if id_item:
+                id_item.setText(str(new_row))
+
+        # 更新排序状态，标记当前为Singers列升序
+        self._sort_column = 1
+        self._sort_order = Qt.SortOrder.AscendingOrder
+        self.results_table.horizontalHeader().setSortIndicator(1, Qt.SortOrder.AscendingOrder)
     '''mouseclick'''
     def mouseclick(self):
         self.context_menu.move(QCursor().pos())
@@ -431,6 +592,10 @@ class MusicdlGUI(QWidget):
         if sources_failed:
             msg += f' (No results from: {", ".join(sources_failed)})'
         self.label_status.setText(msg)
+
+        # 搜索完成后自动按 Singers(升序) -> Filesize(升序) 排序
+        if count > 0:
+            self._auto_sort_after_search()
 
     '''handle partial result (incremental display)'''
     def on_partial_result(self, source, song_infos):
