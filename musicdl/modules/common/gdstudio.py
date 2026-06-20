@@ -39,7 +39,7 @@ class GDStudioMusicClient(BaseMusicClient):
     def _yieldcallback(self):
         return f"jQuery{''.join([str(random.randint(0, 9)) for _ in range(21)])}_{int(time.time() * 1000)}"
     '''_yieldcrc32'''
-    def _yieldcrc32(self, id_value: str, hostname: str = 'music.gdstudio.xyz', version: str = "2026.5.10"):
+    def _yieldcrc32(self, id_value: str, hostname: str = 'music.gdstudio.xyz', version: str = "2026.06.16"):
         # timestamp
         with suppress(Exception): (resp := self.get('https://www.ximalaya.com/revision/time')).raise_for_status()
         ts9 = str(int(time.time() * 1000) if not locals().get('resp') or not hasattr(locals().get('resp'), 'text') else resp.text.strip())[:9]

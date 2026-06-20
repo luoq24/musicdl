@@ -165,7 +165,7 @@ class QobuzMusicClient(BaseMusicClient):
         for music_quality in QobuzMusicClientUtils.MUSIC_QUALITIES:
             music_quality_br, ts9 = music_quality_mapper.get(str(music_quality), "320"), str(int(time.time() * 1000))[:9]
             payload = {"types": "url", "id": song_id, "source": "qobuz", "br": music_quality_br, "s": build_signature_func(str(song_id), ts9, "2026.5.10", urlparse("https://music.gdstudio.xyz/api.php").netloc)}
-            (resp := self.post("https://music.gdstudio.xyz/api.php", data=payload, headers=headers, timeout=10, **request_overrides)).raise_for_status()
+            (resp := requests.post("https://music.gdstudio.xyz/api.php", data=payload, headers=headers, timeout=10, **request_overrides)).raise_for_status()
             if not (download_url := safeextractfromdict((download_result := resp2json(resp=resp)), ['url'], '')) or not str(download_url).startswith('http'): continue
             real_music_quality = real_music_quality[0] if isinstance((real_music_quality := parse_qs(urlparse(str(download_url)).query, keep_blank_values=True).get('fmt') or music_quality), list) else real_music_quality
             download_url_status: dict = self.audio_link_tester.test(url=download_url, request_overrides=request_overrides, renew_session=True)
@@ -187,7 +187,7 @@ class QobuzMusicClient(BaseMusicClient):
         for music_quality in QobuzMusicClientUtils.MUSIC_QUALITIES:
             music_quality_br, ts9 = music_quality_mapper.get(str(music_quality), "320"), str(int(time.time() * 1000))[:9]
             payload = {"types": "url", "id": song_id, "source": "qobuz", "br": music_quality_br, "s": build_signature_func(str(song_id), ts9, "2026.5.10", urlparse("https://music.gdstudio.org/api.php").netloc)}
-            (resp := self.post("https://music.gdstudio.org/api.php", data=payload, headers=headers, timeout=10, **request_overrides)).raise_for_status()
+            (resp := requests.post("https://music.gdstudio.org/api.php", data=payload, headers=headers, timeout=10, **request_overrides)).raise_for_status()
             if not (download_url := safeextractfromdict((download_result := resp2json(resp=resp)), ['url'], '')) or not str(download_url).startswith('http'): continue
             real_music_quality = real_music_quality[0] if isinstance((real_music_quality := parse_qs(urlparse(str(download_url)).query, keep_blank_values=True).get('fmt') or music_quality), list) else real_music_quality
             download_url_status: dict = self.audio_link_tester.test(url=download_url, request_overrides=request_overrides, renew_session=True)

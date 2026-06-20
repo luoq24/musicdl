@@ -206,7 +206,7 @@ class KuwoMusicClient(BaseMusicClient):
     '''_parsewithliuyunidcapi'''
     def _parsewithliuyunidcapi(self, search_result: dict, request_overrides: dict = None):
         # init
-        request_overrides, song_id, MUSIC_QUALITIES, RC4_KEY = request_overrides or {}, str(search_result.get('MUSICRID') or search_result.get('musicrid')).removeprefix('MUSIC_'), ['master', 'atmos_plus', 'atmos', 'flac', '320k'], b"yeelion666"
+        request_overrides, song_id, MUSIC_QUALITIES, RC4_KEY = request_overrides or {}, str(search_result.get('MUSICRID') or search_result.get('musicrid')).removeprefix('MUSIC_'), ['master', 'atmos_plus', 'atmos', 'flac', '320k'][:-1], b"yeelion666"
         if not (search_result.get('SONGNAME') or search_result.get('name') or search_result.get('songName')): search_result.update(self._getsongmetainfo(song_id=song_id, request_overrides=request_overrides))
         swap_func = lambda s, i, j: (lambda t: (s.__setitem__(i, s[j]), s.__setitem__(j, t), s)[-1])(s[i])
         rc4_crypt_func = lambda data, key=RC4_KEY: (lambda s: bytes(reduce(lambda st, byte: (lambda s, i, j, out: (lambda ni, nj: (swap_func(s, ni, nj), out.append(byte ^ s[(s[ni] + s[nj]) % 256]), (s, ni, nj, out))[-1])((i + 1) % 256, (j + s[(i + 1) % 256]) % 256))(*st), data, (s, 0, 0, bytearray()))[3]))(reduce(lambda st, idx: (lambda s, j: (lambda nj: (swap_func(s, idx, nj), (s, nj))[-1])((j + s[idx] + key[idx % len(key)]) % 256))(*st), range(256), (list(range(256)), 0))[0])
@@ -223,6 +223,7 @@ class KuwoMusicClient(BaseMusicClient):
                 raw_data={'search': search_result, 'download': download_result, 'lyric': {}}, source=self.source, song_name=legalizestring(search_result.get('SONGNAME') or search_result.get('name') or search_result.get('songName')), singers=legalizestring(search_result.get('ARTIST') or search_result.get('artist')), album=legalizestring(search_result.get('ALBUM') or search_result.get('album')), ext=download_url_status['ext'], 
                 file_size_bytes=download_url_status['file_size_bytes'], file_size=download_url_status['file_size'], identifier=song_id, duration_s=duration_in_secs, duration=SongInfoUtils.seconds2hms(duration_in_secs), lyric=None, cover_url=search_result.get('hts_MVPIC') or search_result.get('albumpic') or search_result.get('pic'), download_url=download_url_status['download_url'], download_url_status=download_url_status, 
             )
+            if (song_info.file_size_bytes * 8 < 320000 * song_info.duration_s): break # invalid card if audio is too small
             if song_info.with_valid_download_url and song_info.ext in AudioLinkTester.VALID_AUDIO_EXTS: break
         song_info = SongInfo(source=self.source, raw_data={'search': search_result, 'download': download_result, 'lyric': {}}) if (song_info.file_size_bytes * 8 < 320000 * song_info.duration_s) else song_info
         # return

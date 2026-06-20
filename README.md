@@ -65,9 +65,9 @@
 
 # 🎉 What's New
 
+- 2026-06-16: Released musicdl v2.12.7 — fix the freezing issue that occurs when Kugou, Kuwo, QQ Music, and NetEase Cloud Music access third-party APIs (refer to issues #79).
 - 2026-06-11: Released musicdl v2.12.6 — consolidate the third-party APIs for QQ, Kuwo, Kugou, and NetEase Cloud Music, and optimize the request mechanism to improve the overall pipeline efficiency.
 - 2026-06-01: Released musicdl v2.12.5 — fixed invalid interfaces for QQ Music Client and NetEase Cloud Music Client, and added multiple parsing interfaces with SVIP/VIP/member accounts.
-- 2026-05-27: Released musicdl v2.12.4 — optimize the third-party NetEase Cloud Music lossless audio API to avoid returning preview clips; add several lossless music APIs for netease music client.
 
 
 # 🎵 Introduction
