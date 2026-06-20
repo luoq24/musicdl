@@ -464,6 +464,21 @@ class MusicdlGUI(QWidget):
         self.context_menu.move(QCursor().pos())
         self.context_menu.show()
     '''download'''
+    def _get_unique_filepath(self, base_path):
+        """生成不重复的文件路径，若已存在同名文件则追加数字后缀"""
+        if not os.path.exists(base_path):
+            return base_path
+        directory = os.path.dirname(base_path)
+        basename = os.path.basename(base_path)
+        name, ext = os.path.splitext(basename)
+        index = 1
+        while True:
+            new_name = f'{name}_{index}{ext}'
+            new_path = os.path.join(directory, new_name)
+            if not os.path.exists(new_path):
+                return new_path
+            index += 1
+
     def download(self):
         self.selected_music_idx = str(self.results_table.selectedItems()[0].row())
         song_info = self.music_records.get(self.selected_music_idx)
@@ -472,6 +487,19 @@ class MusicdlGUI(QWidget):
                 total_size, chunk_size, download_size = int(resp.headers['content-length']), 1024, 0
                 os.makedirs(self.download_dir, exist_ok=True)
                 download_music_file_path = sanitize_filepath(os.path.join(self.download_dir, song_info['song_name']+'.'+song_info['ext']))
+
+                # 检查是否已存在同名文件
+                if os.path.exists(download_music_file_path):
+                    existing_size = os.path.getsize(download_music_file_path)
+                    if existing_size == total_size:
+                        # 文件大小相同，跳过下载
+                        print(f'[跳过重复] {song_info["song_name"]} 已存在且大小一致 ({existing_size} bytes)，忽略本次下载')
+                        self.bar_download.setValue(0)
+                        return
+                    else:
+                        # 大小不同，追加后缀避免覆盖
+                        download_music_file_path = self._get_unique_filepath(download_music_file_path)
+
                 with open(download_music_file_path, 'wb') as fp:
                     for chunk in resp.iter_content(chunk_size=chunk_size):
                         if not chunk: continue
