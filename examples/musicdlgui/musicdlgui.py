@@ -204,7 +204,7 @@ class MusicdlGUI(QWidget):
         self.settings = load_settings()
         self.download_dir = self.settings.get('download_dir', os.path.expanduser('~/Downloads'))
         # search sources
-        self.src_names = ['QQMusicClient', 'KuwoMusicClient', 'MiguMusicClient', 'QianqianMusicClient', 'KugouMusicClient', 'NeteaseMusicClient']
+        self.src_names = ['QQMusicClient', 'KuwoMusicClient', 'MiguMusicClient', 'QianqianMusicClient', 'KugouMusicClient']
         self.label_src = QLabel('Search Engine:')
         self.check_boxes = []
         checked_sources = self.settings.get('checked_sources', ['NeteaseMusicClient'])
