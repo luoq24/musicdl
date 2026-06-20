@@ -475,7 +475,8 @@ class MusicdlGUI(QWidget):
                         fp.write(chunk)
                         download_size += len(chunk)
                         self.bar_download.setValue(int(download_size / total_size * 100))
-        QMessageBox().information(self, 'Successful Downloads', f"Finish downloading {song_info['song_name']} by {song_info['singers']}, see {download_music_file_path}")
+        # 下载完成，播放提示音
+        QApplication.beep()
         self.bar_download.setValue(0)
     '''on search finished'''
     def on_search_finished(self, results, error=''):
